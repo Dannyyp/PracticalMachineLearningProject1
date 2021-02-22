@@ -1,0 +1,205 @@
+---
+title: "Course Project 1"
+date: "16/02/2021"
+output: html_document
+---
+# Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+# Project Goal
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load the Relevant Libaries
+
+```{r}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(randomForest)
+library(corrplot)
+```
+# Loading the Data and Analysis
+
+## Loading the data
+
+If the files don't already exist then we download them.
+
+```{r}
+if (!file.exists("pml-training.csv")) {
+    
+    file_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+    file_name <- "pml-training.csv"
+    download.file(file_url, file_name, method = "curl")
+}
+
+if (!file.exists("pml-testing.csv")) {
+    
+    file_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+    file_name <- "pml-testing.csv"
+    download.file(file_url, file_name, method = "curl")
+}
+
+training = read.csv("pml-training.csv")
+testing = read.csv("pml-testing.csv")
+```
+
+## Data Visualisation
+
+```{r}
+str(training)
+```
+
+## Data Cleaning 
+
+The training dataset is split to create a "Training" set (80%) and a "Test" set (20%), to perform validations.
+
+```{r}
+set.seed("2021")
+
+inTrain <- createDataPartition(training$classe, p=0.8, list=FALSE)
+
+TrainingSet <- training[inTrain,]
+TestingSet <- training[-inTrain,]
+
+#Checking the dimensions of both sets
+rbind(dim(TrainingSet), dim(TestingSet))
+```
+
+It can be see that there are 160 features in our Training Set and our Testing Set. We can look at reducing the amount of features. 
+
+First lets remove the 'identification` features in the first 5 columns as they do not provide any assistance.
+
+```{r}
+TrainingSet <- TrainingSet[, -(1:5)]
+TestingSet <- TestingSet[, -(1:5)]
+```
+
+Now, by using the nearZeroVar function, we can remove features that have very little change or variation, meaning that they are not useful for prediction.
+
+```{r}
+nearZero = nearZeroVar(TrainingSet)
+
+TrainingSet <- TrainingSet[, -nearZero]
+TestingSet <- TestingSet[, -nearZero]
+
+#Checking the dimensions of both sets
+rbind(dim(TrainingSet), dim(TestingSet))
+```
+
+We now have 97 features in both the Training and Testing set.
+
+Lets see how many NA values we have in total:
+
+```{r}
+sum(is.na(TrainingSet)) + sum(is.na(TestingSet))
+```
+
+We have ALOT of NA values. It would be beneficial to check for any features that contain mostly NA values (85% or more) and then remove them.
+
+```{r}
+#NACol Produces a Logical list
+NACol <- sapply(TrainingSet, function(x) mean(is.na(x))) > 0.85
+
+TrainingSet <- TrainingSet[, NACol == FALSE]
+TestingSet <- TestingSet[, NACol == FALSE]
+
+#Checking the dimensions of both sets
+rbind(dim(TrainingSet), dim(TestingSet))
+```
+
+## Correlation
+
+Lets take a look at the correlation between features using a corrplot.
+
+```{r}
+corMatrix <- cor(TrainingSet[, -54])
+
+corrplot(corMatrix, order='FPC', method = 'color', type='lower', tl.cex=0.55, tl.col=rgb(0,0,0))
+```
+
+# Building a Model
+
+We will look and try 3 different types of models. A Generalised Boosted Model, Decisions Trees and Random Forest.
+
+## Generalised Boosted Model
+
+```{r, cache = TRUE}
+#5 Fold Cross Validation
+GBM_Control <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+
+GBM_Fit <- train(classe ~., data = TrainingSet,
+                 method = "gbm", trControl = GBM_Control,
+                 verbose = FALSE)
+
+#Predict on the Testing set
+GBM_Predict <- predict(GBM_Fit, newdata = TestingSet)
+
+#Produce a Confusion Matrix
+GBM_confMat <- confusionMatrix(GBM_Predict, as.factor(TestingSet$classe))
+GBM_confMat
+
+#Visual Plot of Predictions
+plot(GBM_confMat$table, col = GBM_confMat$byClass, main = "GBM")
+
+#Print the accuracy
+paste('Accuracy of:', round(GBM_confMat$overall['Accuracy'], 4))
+```
+
+## Decision Trees
+
+```{r}
+Decision_Fit <- rpart(classe ~., data = TrainingSet, method = 'class')
+
+fancyRpartPlot(Decision_Fit)
+
+Decision_Predict <- predict(Decision_Fit, newdata = TestingSet, type = 'class')
+
+Decision_confMat <- confusionMatrix(Decision_Predict, as.factor(TestingSet$classe))
+Decision_confMat
+
+plot(Decision_confMat$table, col = Decision_confMat$byClass, main = "Decision Tree")
+
+#Print the accuracy
+paste('Accuracy of:', round(Decision_confMat$overall['Accuracy'], 4))
+```
+
+
+## Random Forest
+
+```{r, cache = TRUE}
+Forest_Control <- trainControl(method="cv", number=3, verboseIter=FALSE)
+
+Forest_Fit <- train(classe ~ ., method="rf", data=TrainingSet, trControl=Forest_Control,
+                    verbose=FALSE)
+
+#Predict on the Testing set
+Forest_Predict <- predict(Forest_Fit, newdata = TestingSet)
+
+#Produce a Confusion Matrix
+Forest_confMat <- confusionMatrix(Forest_Predict, as.factor(TestingSet$classe))
+Forest_confMat
+
+#Visual Plot of Predictions
+plot(Forest_confMat$table, col = Forest_confMat$byClass, main = "Random Forest")
+
+#Print the accuracy
+paste('Accuracy of:', round(Forest_confMat$overall['Accuracy'], 4))
+```
+
+# Using the Best Model on the Test Data
+
+Random Forest provided the best accuracy with a score of `0.9985`.
+
+Using the random forest model on the test data we get:
+
+```{r}
+Forest_Predict_Test <- predict(Forest_Fit, newdata = testing)
+Forest_Predict_Test
+```
